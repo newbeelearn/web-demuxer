@@ -14,7 +14,7 @@ FFMPEG_DEV_CONFIGURE_ARGS = \
 	--disable-stripping
 
 MINI_DEMUX_ARGS = \
-	--enable-demuxer=mov,mp4,m4a,3gp,3g2,matroska,webm,m4v
+	--enable-demuxer=mov,mp4,m4a,matroska,webm
 
 DEMUX_ARGS = \
 	--enable-decoder=h264,hevc,vp9,vp8 \
