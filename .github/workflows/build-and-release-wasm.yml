@@ -1,0 +1,99 @@
+name: Build and Release WASM
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Install pnpm
+      uses: pnpm/action-setup@v2
+      with:
+        version: 8
+        run_install: false
+
+    - name: Get pnpm store directory
+      shell: bash
+      run: |
+        echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+    - name: Setup pnpm cache
+      uses: actions/cache@v3
+      with:
+        path: ${{ env.STORE_PATH }}
+        key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-pnpm-store-
+
+    - name: Install dependencies
+      run: pnpm install
+
+    - name: Start Docker container
+      run: pnpm run dev:docker:x86_64:ci &
+
+    - name: Wait for Docker container to be ready
+      timeout-minutes: 5
+      run: |
+        until docker ps | grep -q "web-demuxer"; do
+          echo "Waiting for container..."
+          sleep 5
+        done
+
+    - name: Build WASM files
+      run: |
+        pnpm run build:wasm:all:ci
+        if [ $? -ne 0 ]; then
+          echo "WASM build failed"
+          exit 1
+        fi
+
+    - name: Verify WASM files exist
+      run: |
+        for file in \
+          "src/lib/ffmpeg.wasm" \
+          "src/lib/ffmpeg.js" \
+          "src/lib/ffmpeg-mini.wasm" \
+          "src/lib/ffmpeg-mini.js"; do
+          if [ ! -f "$file" ]; then
+            echo "Error: $file does not exist"
+            exit 1
+          fi
+        done
+
+    - name: Get Short SHA
+      id: short_sha
+      run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.event_name == 'workflow_dispatch' && format('manual-release-{0}-{1}', github.run_number, steps.short_sha.outputs.sha) || github.ref_name }}
+        name: ${{ github.event_name == 'workflow_dispatch' && format('Manual Release {0} ({1})', github.run_number, steps.short_sha.outputs.sha) || github.ref_name }}
+        body: |
+          Release from commit: ${{ github.sha }}
+          Short hash: ${{ steps.short_sha.outputs.sha }}
+        files: |
+          src/lib/ffmpeg.wasm
+          src/lib/ffmpeg.js
+          src/lib/ffmpeg-mini.wasm
+          src/lib/ffmpeg-mini.js
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
